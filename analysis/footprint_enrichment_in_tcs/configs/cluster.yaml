@@ -1,0 +1,12 @@
+__default__:
+  time: "1:00:00"
+  cpus: 1
+  mem: "8000M"
+  jobname: "{rule}.{wildcards}"
+  output: "logs/slurm-%A_%a.{rule}.out"
+  error: "logs/slurm-%A_%a.{rule}.err"
+
+runGAT:
+  time: "3:00:00"
+  mem: "400M"
+  cpus: 15
