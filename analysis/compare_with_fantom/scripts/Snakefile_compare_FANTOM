@@ -1,0 +1,98 @@
+import pandas
+import numpy
+import os
+import glob
+
+DIR = config['results']
+workdir: DIR
+         
+DATA = config['DATA']
+TCDIR = os.path.join(DIR, "tcs_paraclu")
+CTSSDIR = os.path.join(DIR, "ctss")
+FTCS = os.path.join(DIR, "tcs")
+
+SCRIPTS = config['SCRIPTS']
+
+flist = glob.glob(DATA['raw'])
+f = pandas.DataFrame(flist, columns=['path'])
+
+def getinfo(x):
+    s = os.path.basename(x).replace(".hg19.ctss.bed.gz", "")
+    v1 = s.split("%2c%20",1)
+    cell = v1[0].replace("%20", "_")
+    v2 = v1[1].split('.', 1)
+    typeof = v2[0]
+    extra = v2[1]
+    return cell, typeof, extra
+
+f['cell'], f['type'], f['info'] = zip(*f['path'].map(lambda x: getinfo(x)))
+f.drop_duplicates(subset=['cell'], inplace=True)
+f['cell'] = f['cell'].str.replace("%", "")
+f['cell'] = f['cell'].str.replace("_-_", "_")
+
+
+FANTOM_TISSUES = f['cell'].tolist()
+FANTOM_TISSUES = [x for x in FANTOM_TISSUES if not any(y for y in ['Human_Universal_Total_RNA', 'Human_Universal_Reference_Total_RNA'] if y in x)]
+
+
+rule all:
+    input:
+        tag_clusters = expand(os.path.join(FTCS, "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed"),
+                              sample = FANTOM_TISSUES,
+                              tpm_thresh = 2,
+                              singleton_thresh = 2)
+
+        
+def get_ctss(wildcards):
+    path = f[f['cell'] == wildcards.sample].iloc[0]['path']
+    return path
+    
+        
+rule fix_ctss:
+    input:
+        ctss = get_ctss
+    output:
+        ctss = temp(os.path.join(CTSSDIR, "{sample}.ctss.bed"))
+    shell:
+        r"""
+        zcat {input.ctss} | 
+        awk '{{print $1,$3,$6,$5}}' OFS='\t' > {output.ctss}
+        """
+        
+rule call_tag_clusters_paraclu:
+    """
+    Call paraclu tag clusters within each sample
+    """
+    input:
+        ctss = rules.fix_ctss.output.ctss
+    output:
+        tag_clusters = os.path.join(TCDIR, "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed")
+    params:
+        script = SCRIPTS['tc_cage'],
+        out_string = os.path.join(TCDIR, "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}"),
+        type_clu = "para",
+        norm_type = "none",
+    log:
+        os.path.join(TCDIR, "logs", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.log")
+    conda:
+        "/home/arushiv/erna_analyses/nisc_cage_work/envs/cager_env.yaml"
+    shell:
+        ' Rscript {params.script} '
+        ' --ctss {input.ctss} '
+        ' --out_string {params.out_string} '
+        ' --norm_type {params.norm_type} '
+        ' --type_clu {params.type_clu} '
+        ' --tpm {wildcards.tpm_thresh} '
+        ' --tpm_singleton {wildcards.tpm_thresh} &> {log}'
+
+        
+rule format_tcs:
+    input:
+        tcs = ancient(rules.call_tag_clusters_paraclu.output.tag_clusters)
+    output:
+        tag_clusters = os.path.join(FTCS, "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed") 
+    shell:
+        r"""
+        less {input.tcs} | grep -v cluster | 
+        awk '{{ print $2,$3,$4"\tn\t"$8,$5}}' OFS='\t' > {output.tag_clusters}
+        """

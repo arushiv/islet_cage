@@ -1,0 +1,52 @@
+__default__:
+  time: "1:00:00"
+  cpus: 1
+  mem: "8000M"
+  jobname: "{rule}.{wildcards}"
+  output: "logs/slurm-%A_%a.{rule}.out"
+  error: "logs/slurm-%A_%a.{rule}.err"
+
+trim:
+  time: '01:00:00'
+  mem: 5000
+  cpus: 1
+map_single_end:
+  time: '24:00:00'
+  mem: 30000
+  cpus: 8
+map_paired_end:
+  time: '24:00:00'
+  mem: 30000
+  cpus: 8
+merge:
+  time: '02:00:00'
+  mem: 5000
+  cpus: 1
+mark_duplicates:
+  time: '02:00:00'
+  mem: 15000
+  cpus: 1
+prune:
+  time: '01:00:00'
+  mem: 4000
+  cpus: 1
+vsignal:
+  time: '00:15:00'
+  mem: 8000
+  cpus: 1
+  threads: 5
+versions:
+  time: '00:01:00'
+  mem: 1000
+  cpus: 1
+## Optional rules
+merge_motifs:
+  mem: 15000
+
+run_gat:
+  mem: 15000
+  threads: 4
+
+runGREGOR:
+  time: '05:00:00'
+  threads: 10
