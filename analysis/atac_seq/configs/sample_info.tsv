@@ -1,0 +1,8 @@
+genome	library	tissue	readgroup	read1	read2	read_base
+hg19	Islets1	Islets	abcu196_1	fastq/ABCU196_50_1.merged.pe.hg19.sorted.1.fastq	fastq/ABCU196_50_1.merged.pe.hg19.sorted.2.fastq	ABCU196_50_1.merged.pe.hg19.sorted
+hg19	Islets1	Islets	abcu196_2	fastq/ABCU196_50_2.merged.pe.hg19.sorted.1.fastq	fastq/ABCU196_50_2.merged.pe.hg19.sorted.2.fastq	ABCU196_50_2.merged.pe.hg19.sorted
+hg19	Islets1	Islets	abcu196_3	fastq/ABCU196_50_3.merged.pe.hg19.sorted.1.fastq	fastq/ABCU196_50_3.merged.pe.hg19.sorted.2.fastq	ABCU196_50_3.merged.pe.hg19.sorted
+hg19	Islets1	Islets	abcu196_4	fastq/ABCU196_50_4.merged.pe.hg19.sorted.1.fastq	fastq/ABCU196_50_4.merged.pe.hg19.sorted.2.fastq	ABCU196_50_4.merged.pe.hg19.sorted
+hg19	Islets2	Islets	abe1388_50_14	fastq/Isl_50_14_GES14_02359_TCCTGAGC_LaneAll.pytrim.1.fastq	fastq/Isl_50_14_GES14_02359_TCCTGAGC_LaneAll.pytrim.2.fastq	Isl_50_14_GES14_02359_TCCTGAGC_LaneAll.pytrim
+hg19	Islets2	Islets	abe1388_50_15	fastq/Isl_50_15_GES14_02360_GGACTCCT_LaneAll.pytrim.1.fastq	fastq/Isl_50_15_GES14_02360_GGACTCCT_LaneAll.pytrim.2.fastq	Isl_50_15_GES14_02360_GGACTCCT_LaneAll.pytrim
+hg19	Islets2	Islets	abe1388_50_16	fastq/Isl_50_16_GES14_02361_TAGGCATG_LaneAll.pytrim.1.fastq	fastq/Isl_50_16_GES14_02361_TAGGCATG_LaneAll.pytrim.2.fastq	Isl_50_16_GES14_02361_TAGGCATG_LaneAll.pytrim

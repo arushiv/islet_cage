@@ -1,0 +1,1 @@
+# IMPORTANT: Download ATAC-seq fastq files and fix the paths  in "sample_info.tsv".
