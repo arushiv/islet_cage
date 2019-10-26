@@ -1,0 +1,118 @@
+import os
+import pandas
+import sys
+
+
+DIR = config["results"]
+
+workdir: DIR
+         
+
+CHROMSTATES = glob_wildcards(config['chromatin_states'])[0]
+    
+rule final_annotations:
+    input:
+        chromatin_states = expand(os.path.join(DIR, "Islets.{states}.bed"), states = CHROMSTATES),
+        atac_seq = os.path.join(DIR, "Islets.atac_peaks.bed"),
+        tc = os.path.join(DIR, "Islets.tcs.bed"),
+        tc_in_state =  expand(os.path.join(DIR, "Islets.tc_in_{state}.bed"), state=['all_enhancer', 'all_promoter']),
+        peaks_in_state =  expand(os.path.join(DIR, "Islets.peaks_in_{state}.bed"), state=['all_enhancer', 'all_promoter']),
+        accessible_tc_in_state = expand(os.path.join(DIR, "Islets.tc_in_peak_in_{state}.bed"), state=['all_enhancer', 'all_promoter']),
+        flank = expand(os.path.join(DIR, "Islets.tc_flanking_{pos}stream_{bp}.bed"),
+                       pos = ['up', 'down'],
+                       bp = 500),
+        static = os.path.join(DIR, "static_dwnld.OK")
+        # static = os.path.join(DIR, "{static}.bed"),
+        
+
+def get_file_from_config(wildcards):
+    if wildcards.annot in config.keys():
+        linkfile = config[wildcards.annot]
+    elif wildcards.annot in CHROMSTATES:
+        linkfile = config['chromatin_states'].format(state = wildcards.annot)
+    return linkfile
+
+
+rule get_static_files:
+    output:
+        static = os.path.join(DIR, "static_dwnld.OK")
+    shell:
+        """
+        wget https://data.broadinstitute.org/alkesgroup/LDSCORE/baseline_bedfiles.tgz --directory-prefix {DIR}/ ;
+        tar -xzvf {DIR}/baseline_bedfiles.tgz -C {DIR} ;      
+        rm {DIR}/baseline/*.500.bed
+        """
+
+rule link_files:
+    input:
+        get_file_from_config
+    output:
+        state = os.path.join(DIR, "Islets.{annot}.bed")
+    shell:
+        """
+        ln -s {input} {output}
+        """
+        
+rule make_tc_in_state:
+    input:
+        tc = os.path.join(DIR, "Islets.tcs.bed"),
+        state = config['chromatin_states']
+    output:
+        main = os.path.join(DIR, "Islets.tc_in_{state}.bed")
+    shell:
+        'intersectBed -a {input.tc} -b {input.state} > {output.main}'
+
+        
+rule make_peak_in_state:
+    input:
+        atac = os.path.join(DIR, "Islets.atac_peaks.bed"),
+        state = config['chromatin_states']
+    output:
+        main = os.path.join(DIR, "Islets.peaks_in_{state}.bed")
+    shell:
+        'intersectBed -a {input.atac} -b {input.state} > {output.main}'
+
+
+rule make_tc_in_peak_in_state:
+    input:
+        atac = os.path.join(DIR, "Islets.atac_peaks.bed"),
+        tc = os.path.join(DIR, "Islets.tcs.bed"),
+        state = config['chromatin_states']
+    output:
+        main = os.path.join(DIR, "Islets.tc_in_peak_in_{state}.bed")
+    shell:
+        """intersectBed -a {input.tc} -b {input.atac} | 
+        intersectBed -a - -b {input.state} > {output.main}"""
+
+
+rule tc_directional_flank_only:
+    """Get upstream vs downstream region ( original TC not included) based on TC strand """
+    input:
+        tc = config['tcs_with_strand'],
+        hg19 = config['hg19']
+    output:
+        up_flank = os.path.join(DIR, "Islets.tc_flanking_upstream_{bp}.bed"),
+        down_flank = os.path.join(DIR, "Islets.tc_flanking_downstream_{bp}.bed"),
+    shell:
+        r""" less {input.tc} |
+        awk '{{if (($6=="+")) {{$3=$2+1; $2=$2-{wildcards.bp}}} else {{$2=$3-1; $3=$3+{wildcards.bp}}}; print $1,$2,$3}}' OFS='\t' |
+        awk '{{if (($2<0)) {{$2=0}}; print $1,$2,$3}}' OFS='\t' |
+        intersectBed -a - -b {input.hg19} |
+        sortBed -i - | mergeBed -i - > {output.up_flank} ; """
+        ""
+        r""" less {input.tc} |
+        awk '{{if (($6=="+")) {{$2=$3-1; $3=$3+{wildcards.bp}}} else {{$3=$2+1; $2=$2-{wildcards.bp}}}; print $1,$2,$3}}' OFS='\t' |
+        awk '{{if (($2<0)) {{$2=0}}; print $1,$2,$3}}' OFS='\t' |
+        intersectBed -a - -b {input.hg19} |
+        sortBed -i - | mergeBed -i - > {output.down_flank} ; """
+
+
+onerror:
+    print("Error: Snakemake aborted!")
+    shell(("mail -s 'Snakemake annotations error' "
+         "{config[email]} < {log}"))
+    
+onsuccess:
+    print("Success: Snakemake completed!")
+    shell(("mail -s 'Snakemake annotations Completed' "
+           "{config[email]} < {log}"))
