@@ -1,0 +1,399 @@
+import os
+import pandas
+import numpy
+
+include: "Snakefile_chipeseq_preprocess"
+
+CELL_N = PARAMETERS['cell_types'].keys()
+
+CHROM = list(range(1, 23)) + ['X', 'Y']    
+MARKS = PARAMETERS['marks']
+CONTROL = PARAMETERS['control']
+HISTONE_MARKS = [mark for mark in MARKS if mark != CONTROL]
+NUMSTATES = list(range(PARAMETERS['minStates'], PARAMETERS['numStates'] + 1)) 
+COMPOSITE_STATES = ['all_enhancer','all_promoter','stretchEnhancer']
+
+all_cells_groups = list(PARAMETERS['cell_types'].values())
+flatlist = [cell for sublist in all_cells_groups for cell in sublist]
+CELL = list(set(flatlist))
+CELL.sort()
+
+SELECTED_MODEL_STATES = PARAMETERS['selected_model']
+# Directories
+COVERAGE_DIR = get_dir("histon_coverages")
+SUBSAMPLE_DIR = get_dir("all_subsampled_histones")
+BINARIZE_HISTONES = get_dir("binarized_poisson")
+BINARIZE_PEAKS = get_dir("binarized_peaks")
+BINARIZE_DATA = get_dir("binarized_data")
+OVERLAP_DIR = get_dir("overlapEnrichments_pnas2017States")
+REORDER_DIR = get_dir("selected_annotated_states")
+
+rule final_chromhmm:
+    """ Learn a ChromHMM model using histone data for four cell types.
+    Use previously published ChIP-seq files as in the Islet eQTL 2017 PNAS paper (DOI 10.1073/pnas.1621192114).
+    Replace Islet H3K4me1 data from a different study (DOI 10.1038/ng.2870) which is better quality
+    Then use ChromHMM to run models with various number of states. Select model that best captures information
+    Use Chromhmm overlap enrichment with previously published states in matching cell types to annotate new states"""
+    input:
+        coverages = os.path.join(COVERAGE_DIR, "coverages.txt"),
+        likelihoods = os.path.join(FIG_DIR, "models.likelihoods.plots.OK"),
+        emissions =  expand(os.path.join(FIG_DIR, "emissions", "{model_type}_{numStates}.png"),
+                            model_type = CELL_N,
+                            numStates = NUMSTATES),
+        overlap_enrich = expand(os.path.join(FIG_DIR, "overlap_enrich", "{model_type}.{cell}.{numStates}.pdf"),
+                                model_type = CELL_N,
+                                cell = CELL,
+                                numStates = range(11, 15)),
+        done = expand(os.path.join(DIR, "files_by_state/logs", "{model_type}_{numStates}.generated.OK"),
+                      model_type = CELL_N,
+                      numStates = range(11, 15)),        
+        reordered = expand(os.path.join(REORDER_DIR, "{model_type}_{numStates}.reorder.dat"),
+                           model_type = CELL_N,
+                           numStates = SELECTED_MODEL_STATES ),
+        composite_states = expand(os.path.join(REORDER_DIR, "files_by_state",
+                                               "{model_type}_{numStates}.{cell}.{composite_state}.bed"),
+                                  model_type = CELL_N,
+                                  numStates = SELECTED_MODEL_STATES,
+                                  cell = CELL,
+                                  composite_state = COMPOSITE_STATES)
+
+rule get_bed_coverages:
+    """Get coverages in bed files for histones """
+    input:
+        bed = DATA['histone_bed_files']
+    output:
+        cov = temp(os.path.join(COVERAGE_DIR, "{cell}.{mark}.txt"))
+    shell:
+        r"""
+        zcat {input.bed} | wc -l | 
+        awk '{{print "{wildcards.cell}\t{wildcards.mark}\t"$0}}' OFS='\t' > {output.cov}
+        """
+
+
+rule concat_bed_coverages:
+    """Concat coverages in bed files for histones """
+    input:
+        covs = expand(rules.get_bed_coverages.output.cov,
+                      cell = CELL,
+                      mark = MARKS)
+    output:
+        tem = temp(os.path.join(COVERAGE_DIR, "coverages.temp.txt")),
+        cov = os.path.join(COVERAGE_DIR, "coverages.txt")
+    shell:
+        r"""
+        cat {input.covs} > {output.tem} ;
+        echo -e "cell\tmark\tbed_coverage" | 
+        cat - {output.tem} > {output.cov} 
+        """
+
+def get_subsample_depth(wildcards):
+    depth = PARAMETERS['subsample'][wildcards.mark]
+    return(depth)
+
+rule bedSubsample:
+    """ Human Histone ChIP-seq data, check median depth. Then subsample """
+    input:
+        DATA['histone_bed_files'],
+    output:
+        temp(os.path.join(SUBSAMPLE_DIR, "{cell}.{mark}.bed")),
+    params:
+        subsample = get_subsample_depth,
+        script = os.path.join(SCRIPTS, "randomlySampleLines.pl"),
+    shell:
+        r"""
+        lines=`zcat {input} | wc -l`; fraction=`echo " {params.subsample} / $lines " | bc -l`; 
+        zcat {input} | perl {params.script} -f $fraction > {output}
+        """
+
+        
+rule makeCellMarksTable:
+    """ Marks table required for bed binarize with cell name, mark name, mark bedfile and control bedfile """
+    output:
+        main = os.path.join(BINARIZE_HISTONES, f"marksTable_cells_{'_'.join(CELL)}.txt")
+    params:
+        cell = CELL,
+        histone_marks = HISTONE_MARKS,
+        control = CONTROL,
+        custom_wce = PARAMETERS['custom_wce']
+    run:
+        from itertools import product
+        d = pandas.DataFrame(list(product(params.cell, params.histone_marks)), columns = ['cell','marks'])
+        d.loc[:,'markBed'] = d.apply(lambda x: f"{x['cell']}.{x['marks']}.bed", axis=1)
+        d.loc[:,'controlBed'] = d['cell'].map(lambda x: f"{x}.{params.control}.bed")
+        # replace control for Islet H3K4me1
+        if params.custom_wce != "":
+            cell = params.custom_wce['cell']
+            mark = params.custom_wce['mark']
+            control = params.custom_wce['wce']
+            d.loc[d[(d['cell'] == cell) & (d['marks'] == mark)].index, 'controlBed'] = control
+            
+        d[['cell','marks','markBed','controlBed']].to_csv(output.main, sep='\t', index=False, header=False)
+
+        
+rule binarizeBed_poisson:
+    """ Binarize data to run ChromHMM - do this once to get all cells ever required in the full snakemake """
+    input:
+        bedBinarized = expand(os.path.join(SUBSAMPLE_DIR, "{cell}.{mark}.bed"),
+                              mark = MARKS,
+                              cell=CELL),
+        chromLength = DATA['hg19_lengths'],
+        cellMarksTable = rules.makeCellMarksTable.output.main,
+    output:
+        expand(os.path.join(BINARIZE_HISTONES, "{cell}_chr{chrom}_binary.txt"),
+                    cell = CELL,
+                    chrom = CHROM)
+    params:
+        inputDir = SUBSAMPLE_DIR,
+        outputDir = BINARIZE_HISTONES,
+        logDir = os.path.join(BINARIZE_HISTONES, "logs"),
+        log = os.path.join(BINARIZE_HISTONES, "logs", "mylog.log")
+    shell:
+        ' mkdir -p {params.logDir} ;'
+        ' {CHROMHMM} BinarizeBed '
+        ' -c {params.inputDir} '
+        ' {input.chromLength} '
+        ' {params.inputDir} '
+        ' {input.cellMarksTable} '
+        ' {params.outputDir} 1> {params.log} '
+        
+
+
+rule link_binarized_files_for_model:
+    """Link files for required cell types per model in a directory """
+    input:
+        myfeatures_histones = os.path.join(BINARIZE_HISTONES, "{cell}_chr{chrom}_binary.txt")
+    output:
+        paths = os.path.join(BINARIZE_DATA, "{model_type}", "{cell}_chr{chrom}_binary.txt")
+    params:
+        dirname = os.path.join(BINARIZE_DATA, "{model_type}")
+    shell:
+        """
+        ln -s {input} {params.dirname}/. 
+        """
+
+
+def get_features_for_model(wildcards):
+    var = wildcards.model_type.split("__")
+    paths = expand(os.path.join(BINARIZE_DATA, "{model_type}", "{cell}_chr{chrom}_binary.txt"),
+                   model_type = wildcards.model_type,
+                   cell = PARAMETERS['cell_types'][wildcards.model_type],
+                   chrom = CHROM)
+    return paths
+
+        
+rule learnModel:
+    """Learn model using binarized data """
+    input:
+        myfeatures_histones = get_features_for_model
+    output:
+        emission = os.path.join(DIR, "{model_type}_{numStates}",
+                                "emissions_{numStates}.txt"),
+        transitions = os.path.join(DIR, "{model_type}_{numStates}",
+                                   "transitions_{numStates}.txt"),
+        model = os.path.join(DIR, "{model_type}_{numStates}",
+                             "model_{numStates}.txt"),
+    params:
+        procs = 20,
+        iterations = 2000,
+        inputdir = os.path.join(BINARIZE_DATA, "{model_type}"),
+        outputdir = os.path.join(DIR, "{model_type}_{numStates}"),
+        assembly = PARAMETERS['assembly'],
+        seed = 1321123
+    log:
+        os.path.join(LOG_DIR, "log.learnmodel.{model_type}.{numStates}.txt")
+    shell:
+        ' {CHROMHMM} LearnModel '
+        ' -p {params.procs} '
+        ' -r {params.iterations} '
+        ' -s {params.seed} '
+        ' {params.inputdir} '
+        ' {params.outputdir} '
+        ' {wildcards.numStates} '
+        ' {params.assembly}  1> {log} '
+        
+
+rule compare_models_likelihoods:
+    """
+    Use log-likelihood plot (output from ChromHMM LearnModel to stdout)
+    to help decide how many states to consider 
+    """
+    input:
+        log = expand(rules.learnModel.log,
+                     model_type = CELL_N,
+                     numStates = NUMSTATES)
+    output:
+        fig = os.path.join(FIG_DIR, "models.likelihoods.plots.OK"),
+    params:
+        figdir = FIG_DIR
+    script:
+        os.path.join(SCRIPTS, 'compile_log_likelihood.py')
+
+
+rule plot_emissions:
+    """Plot emission probabilies again with own script """
+    input:
+        model = rules.learnModel.output.model,
+    output:
+        fig =  os.path.join(FIG_DIR, "emissions", "{model_type}_{numStates}.png")
+    params:
+        script = os.path.join(SCRIPTS, 'plot_stateEmissions.py'),
+    shell:
+        """
+        python {params.script} {input.model} {output.fig}
+        """
+
+# #####
+# # Compare overlap enrichment witg previous state model
+# #####
+
+rule make_previous_state_files_for_overlapEnrichment:
+    """
+    Calculate overlap enrichment of new model states with previous states. 
+    Make file with list of paths for previous states
+    """
+    input:
+        previous = expand(DATA['states_2017'],
+                          chromatinState = DATA['states_2017_types'])
+    output:
+        previous_state_files = os.path.join(OVERLAP_DIR, "{cell}.previousStateFiles.txt"),
+    shell:
+        r"""
+        for i in {input}; do b=`basename $i`; echo $b ; done > {output.previous_state_files}
+        """
+
+        
+rule overlapEnrichment:
+    input:
+        new_model = os.path.join(DIR, "{model_type}_{numStates}",
+                                 "model_{numStates}.txt"),
+        previous_state_files = rules.make_previous_state_files_for_overlapEnrichment.output.previous_state_files,
+    output:
+        overlap_enrich = os.path.join(OVERLAP_DIR,
+                                      "{model_type}.{cell}.{numStates}.txt")
+    params:
+        segment = os.path.join(DIR, "{model_type}_{numStates}",
+                               "{cell}_{numStates}_segments.bed"),
+        previous_state_dir = os.path.join(BASE_DATA_DIR, "pnas2017_states"),
+        outprefix = os.path.join(OVERLAP_DIR, "{model_type}.{cell}.{numStates}")
+    shell:
+        """
+        {CHROMHMM} OverlapEnrichment -f {input.previous_state_files} {params.segment} {params.previous_state_dir} {params.outprefix}
+        """
+
+        
+rule plot_overlap_enrichment:
+    input:
+        overlap_enrich = rules.overlapEnrichment.output.overlap_enrich
+    output:
+        fig = os.path.join(FIG_DIR, "overlap_enrich", "{model_type}.{cell}.{numStates}.pdf")
+    script:
+        os.path.join(SCRIPTS, 'plot_chromhmm_overlap_enrichment.R')
+        
+
+# #####
+# # Split chromatin state bed files into separate states to run overlap enrichments on
+# #####
+
+rule split_states_into_files:
+    input:
+        new_model = os.path.join(DIR, "{model_type}_{numStates}",
+                                 "model_{numStates}.txt"),
+    output:
+        done = os.path.join(DIR, "files_by_state/logs", "{model_type}_{numStates}.generated.OK"),
+    params:
+        model_glob = os.path.join(DIR, "{model_type}_{numStates}", "*_segments.bed"),
+    run:
+        import glob
+        from pathlib import Path
+        
+        segment_files = glob.glob(params.model_glob)
+
+        for filename in segment_files:
+            sp = filename.split('/')
+            fname = f"{sp[-2]}.{sp[-1].split('_')[0]}"
+            d = pandas.read_csv(filename, sep='\t', header=None, names=['chrom','start','end','state'])
+
+            for name, group in d.groupby('state'):
+                outfilename = os.path.join(DIR, "files_by_state",
+                                           f"{fname}.{name}.bed")
+                group.to_csv(outfilename, sep='\t', index=False, header=False)
+
+        Path(output.done).touch()
+
+
+rule final:
+    input:
+
+
+rule annotate_state11:
+    input:
+        overlap_enrich = os.path.join(OVERLAP_DIR, "cell4.SkeletalMuscle.11.txt"),
+        model = os.path.join(DIR, "cell4_11", "model_11.txt"),
+        color = os.path.join(BASE_DATA_DIR, "chromhmm/color.tsv"),
+    output:
+        df = os.path.join(REORDER_DIR, "cell4_11.reorder.dat"),
+        reordered_segments = expand(os.path.join(REORDER_DIR, "cell4_11.{cell}.dense.bed"),
+                                    cell = CELL),
+        reordered_emissions = os.path.join(REORDER_DIR, "cell4_11.emissions.pdf"),
+        genome_percent = os.path.join(REORDER_DIR, "cell4_11.genomeperc.pdf"),
+        color_annotation = os.path.join(REORDER_DIR, "cell4_11.colorannot.pdf"),
+    params:
+        overlap_enrich_cell = "SkeletalMuscle",
+        segment_dir = os.path.join(DIR, "cell4_11"),
+        script_reorder = os.path.join(SCRIPTS, "state_reorder.py"),
+        script_figures = os.path.join(SCRIPTS, "state_figures.R"),
+        reordered_files_by_state = os.path.join(REORDER_DIR, "files_by_state"),
+        prefix = "cell4_11",
+        custom_states = """ """
+    shell:
+        ' python {params.script_reorder} '
+        ' --color {input.color} '
+        ' --overlap_enrich {input.overlap_enrich} '
+        ' --overlap_enrich_cell {params.overlap_enrich_cell} '
+        ' --model {input.model} '
+        ' --segment_dir {params.segment_dir} '
+        ' --reorder_dir {REORDER_DIR} '
+        ' --reorder_files_dir {params.reordered_files_by_state} '
+        ' --prefix {params.prefix} '
+        ' {params.custom_states} ; '
+        ''
+        ' Rscript {params.script_figures} '
+        ' {output.df} '
+        ' {output.genome_percent} '
+        ' {output.color_annotation} ;'
+
+rule make_composite_files:
+    input:
+        reordered = os.path.join(REORDER_DIR, "cell4_11.{cell}.dense.bed")
+    output:
+        all_enhancer = os.path.join(REORDER_DIR, "files_by_state",
+                                    "cell4_11.{cell}.all_enhancer.bed"),
+        all_promoter = os.path.join(REORDER_DIR, "files_by_state",
+                                    "cell4_11.{cell}.all_promoter.bed"),
+        stretch_enhancer = os.path.join(REORDER_DIR, "files_by_state",
+                                        "cell4_11.{cell}.stretchEnhancer.bed"),
+        temp_enh = temp(os.path.join(REORDER_DIR, "files_by_state",
+                                     "cell4_11.{cell}.all_enh.bed.temp")),
+        temp_prom = temp(os.path.join(REORDER_DIR, "files_by_state",
+                                      "cell4_11.{cell}.all_prom.bed.temp"))
+    params:
+        all_enhancer = ['Genic_enhancer', 'Active_enhancer', 'Weak_enhancer'],
+        all_promoter = ['Active_TSS', 'Weak_TSS', 'Flanking_TSS']
+    run:
+        d = pandas.read_csv(input.reordered, sep='\t', header=None, usecols=[0,1,2,3])
+        d[d[3].isin(params.all_enhancer)].to_csv(output.temp_enh, sep='\t', index=False, header=False)
+        d[d[3].isin(params.all_promoter)].to_csv(output.temp_prom, sep='\t', index=False, header=False)
+        
+        shell(
+            'less {output.temp_enh} | sortBed -i - | mergeBed -i - > {output.all_enhancer} ;'
+            'less {output.temp_prom} | sortBed -i - | mergeBed -i - > {output.all_promoter} ;'
+            r"""less {output.all_enhancer} | awk '{{if (($3-$2>=3000)) print $0}}' OFS='\t' > {output.stretch_enhancer} """
+        )
+
+        
+onsuccess:
+    shell("""mail -s "Chromhmm histone finished" {my_email} < {log}""")
+
+onerror:
+    print("An error occurred")
+    shell("""mail -s "an error occurred in Chromhmm histone workflow" {my_email} < {log}""")
