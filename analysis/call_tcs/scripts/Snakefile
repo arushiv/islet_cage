@@ -1,0 +1,377 @@
+import pandas
+import numpy
+import os
+import sys
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pysam
+import glob
+
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams.update({'font.size': 14})
+plt.switch_backend('agg')
+
+
+cage_config = os.getenv("cage_config")
+include: cage_config
+
+DIR = os.path.join(BASE_WORK_DIR, "call_tcs/")
+workdir: DIR
+
+FIGDIR = os.path.join(DIR, "figures")
+SCRIPTDIR = os.path.join(BASE_ANALYSIS_DIR, "call_tcs", "scripts/")
+
+onsuccess:
+    shell("""mail -s "TC calling finished" {my_email} < {log}""")
+    
+onerror:
+    print("An error occurred")
+    shell("""mail -s "an error occurred in TC calling workflow" {my_email} < {log}""")
+
+DATA = {
+    'trimmed_processed_bams' : os.path.join(BASE_WORK_DIR, "trimmed_bams/{sample}.dedup.bam"),
+    'sample_library_map' : os.path.join(BASE_DATA_DIR, "sample_library_map.tsv"),
+    'gencode_tss_pc' : os.path.join(BASE_DATA_DIR, "tsslist_gencodev19_pc.bed"),
+    'gencode_tss_all' : os.path.join(BASE_DATA_DIR, "tsslist_gencodev19_all.bed"),
+    'hg19_lengths' : os.path.join(BASE_DATA_DIR, "hg19_lengths.txt"),
+    'sample_metrics' : os.path.join(BASE_DATA_DIR, "sample_tissue_coverage_strandedness.tsv"),
+    'blacklist': [os.path.join(BASE_DATA_DIR, "wgEncodeDukeMapabilityRegionsExcludable.bed.gz"),
+                  os.path.join(BASE_DATA_DIR, "wgEncodeDacMapabilityConsensusExcludable.bed.gz")]
+}
+
+SCRIPTS = {
+    'tc_cage' : os.path.join(SCRIPTDIR, "tc_cage.R")
+}
+
+
+STRANDEDNESS = 0.85
+sampleDF = pandas.read_csv(DATA['sample_metrics'], sep='\t')
+sampleDF = sampleDF[(sampleDF['proportion_with_correct_strand'] >= STRANDEDNESS)]
+
+#### Functions ####
+
+def get_coverage(bamfile, match_string):
+    """Get total reads using samtools flagstat """
+    o = pysam.flagstat(bamfile)
+    total_reads = int([s for s in o.split('\n') if match_string in s][0].split()[0])
+    return total_reads
+
+
+def get_tissue(sample):
+    return sampleDF[sampleDF['samplename'] == sample].iloc[0]['tissue']
+
+def get_sample_for_tissue(tissue):
+    return sampleDF[sampleDF['tissue'] == tissue]['library'].tolist()
+
+
+#### WILDCARDS etc ####
+
+TISSUES = ['Islets'] #['GM12878', 'Adipose', 'Islets', 'endoC', 'SkeletalMuscle']
+SAMPLES = sampleDF[sampleDF['tissue'].isin(TISSUES)]['library'].tolist()
+
+TPM_THRESHOLD = [2]
+SINGLETON_THRESHOLD = TPM_THRESHOLD #[0.0]
+MIN_EXP_THRESHOLD = [5, 10, 15]
+TSS_TYPES = ['pc','all']
+FLANK = [1000, 5000]
+
+TC_FILE_EXPANSION = expand(os.path.join(DIR, "tcs", "tissue_tcs_formatted",
+                                        "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{tpm_thresh}.minExpIn{minExp}.noblacklist.bed"),
+                           tpm_thresh = TPM_THRESHOLD,
+                           minExp = MIN_EXP_THRESHOLD,
+                           tissue = TISSUES),
+#### Workflow ####
+rule call_tcs:
+    """
+    Call TCs using paraclu method in each sample
+    Merge across samples of a tissue and keep TC elements supported
+    by more than N samples.
+    """
+    input:
+        fig_counts = os.path.join(FIGDIR, "fig.tc_counts.png"),
+        fig_tss_distal = expand(os.path.join(DIR, "tcs/stats", "fig.tss.{tss_type}.flank_{flank}_proximal_distal_formatted.png"),
+                                tss_type = TSS_TYPES,
+                                flank = FLANK),
+        fig_len_dist = os.path.join(FIGDIR, "tc_lengths.png"),
+        tag_clusters = TC_FILE_EXPANSION
+        
+rule get_R1SS:
+    """
+    Get Read 1 Start Sites or CAGE tags using samtools flag 1 + 2 + 64 = 67, converting bam to bed, then based on strand get start site.
+    Get counts at each R1SS using cut | sort | uniq -c
+    Print out the format required.
+    """
+    input:
+        bam = DATA['trimmed_processed_bams']
+    output:
+        r1ss = os.path.join(DIR, "sample_r1ss", '{sample}.r1ss.bed'),
+        ctss = os.path.join(DIR, "sample_ctss", '{sample}.ctss.bed'),
+    shell:
+        r"""
+        samtools view -f 67 {input.bam} -O BAM | 
+        bedtools bamtobed -i - |
+        awk '{{if (($6 == "+")) print $1,$2,$2+1,$4,$5,$6; else print $1,$3-1,$3,$4,$5,$6;}}' OFS='\t' |
+        cut -f1,2,3,6 |
+        sort | uniq -c |
+        awk '{{print $2,$3,$4,$2"_"$3"_"$4"_"$5,$1,$5}}' OFS='\t' > {output.r1ss};
+        less {output.r1ss} | awk '{{print $1,$3,$6,$5}}' OFS='\t' > {output.ctss}        
+        """
+
+
+rule call_tag_clusters_paraclu:
+    """
+    Call paraclu tag clusters within each sample
+    """
+    input:
+        ctss = rules.get_R1SS.output.ctss
+    output:
+        tag_clusters = os.path.join(DIR, "tcs/sample_tcs", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed")
+    params:
+        script = SCRIPTS['tc_cage'],
+        out_string = os.path.join(DIR, "tcs/sample_tcs", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}"),
+        type_clu = "para",
+        norm_type = "none",
+    log:
+        os.path.join(DIR, "tcs/logs", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.log")
+    conda:
+        "/home/arushiv/erna_analyses/nisc_cage_work/envs/cager_env.yaml"
+    shell:
+        ' Rscript {params.script} '
+        ' --ctss {input.ctss} '
+        ' --out_string {params.out_string} '
+        ' --norm_type {params.norm_type} '
+        ' --type_clu {params.type_clu} '
+        ' --tpm {wildcards.tpm_thresh} '
+        ' --tpm_singleton {wildcards.tpm_thresh} &> {log}'
+
+
+rule organize_paraclu_tcs:
+    """organize into proper bed format """
+    input:
+        tag_clusters = rules.call_tag_clusters_paraclu.output.tag_clusters
+    output:
+        tag_temp = temp(os.path.join(DIR, "tcs/formatted", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed.temp")),
+        tag_clusters = os.path.join(DIR, "tcs/formatted", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed")
+    run:
+        # some paraclu output is not integer
+        shell(r"""
+        less {input.tag_clusters} | grep -v cluster | awk '{{print $2,$3,$4"\tn\t"$6,$5}}' OFS='\t' | sort -k1,1 -k2,2n > {output.tag_temp}
+        """)
+        d = pandas.read_csv(output.tag_temp, sep='\t', header=None)
+        d[1] = d[1].astype(int)
+        d[2] = d[2].astype(int)
+        d.to_csv(output.tag_clusters, sep='\t', index=False, header=False)
+
+    
+rule merge_tcs_by_tissue:
+    """Merge TCs for each sample within a tissue considering strand """
+    input:
+        tag_clusters = lambda wildcards: expand(rules.organize_paraclu_tcs.output.tag_clusters,
+                                                sample = get_sample_for_tissue(wildcards.tissue),
+                                                tpm_thresh = wildcards.tpm_thresh,
+                                                singleton_thresh = wildcards.singleton_thresh)
+    output:
+        tag_clusters = os.path.join(DIR, "tcs", "merged_by_tissue", "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed")
+    shell:
+        r"""
+        cat {input.tag_clusters} | 
+        sortBed -i - | 
+        bedtools merge -s -c 6 -o distinct -i -  | 
+        awk '{{print $1,$2,$3"\tn\t0\t"$4}}' OFS='\t' > {output.tag_clusters}
+        """
+
+rule check_if_tc_in_sample:
+    """For each merged TC element, see how many samples support the call """
+    input:
+        merged_tc = os.path.join(DIR, "tcs", "merged_by_tissue",
+                                 "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed"),
+        sample_tc = os.path.join(DIR, "tcs", "formatted",
+                                 "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed"),
+    output:
+        tc_counts = os.path.join(DIR, "tcs", "check_if_tc_in_sample",
+                                 "tc_paraclu.{sample}.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed"),
+        counts = temp(os.path.join(DIR, "tcs", "check_if_tc_in_sample",
+                                   "tc_paraclu.{sample}.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed.counts")),
+    shell:
+        r"""
+        intersectBed -a {input.merged_tc} -b {input.sample_tc} -s -wao | 
+        awk '{{print $1,$2,$3,$4,$5,$6,$NF}}' OFS='\t' | 
+        awk '{{if (($NF>0)) {{$NF=1}}; print $0}}' OFS='\t' | 
+        sort | uniq > {output.tc_counts};
+        cut -f7 {output.tc_counts} > {output.counts}
+        """
+
+rule make_consensus_tcs:
+    input:
+        tc_counts = lambda wildcards: expand(os.path.join(DIR, "tcs", "check_if_tc_in_sample",
+                                                          "tc_paraclu.{sample}.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed"),
+                                          sample = get_sample_for_tissue(wildcards.tissue),
+                                          tissue = wildcards.tissue,
+                                          tpm_thresh = wildcards.tpm_thresh,
+                                          singleton_thresh = wildcards.singleton_thresh),
+        counts = lambda wildcards: expand(os.path.join(DIR, "tcs", "check_if_tc_in_sample",
+                                                       "tc_paraclu.{sample}.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed.counts"),
+                                          sample = get_sample_for_tissue(wildcards.tissue),
+                                          tissue = wildcards.tissue,
+                                          tpm_thresh = wildcards.tpm_thresh,
+                                          singleton_thresh = wildcards.singleton_thresh),
+        blacklist = DATA['blacklist']
+    output:
+        tc_temp = temp(os.path.join(DIR, "tcs", "tissue_tcs/temp", "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed.temp")),
+        tcs = temp(os.path.join(DIR, "tcs", "tissue_tcs/temp", "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.bed")),
+        tcs_no_blacklist = os.path.join(DIR, "tcs", "tissue_tcs/temp", "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.noblacklist.bed")
+    shell:
+        r"""
+        paste {input.counts} | awk '{{sum=0; for (i=1; i<=NF; i++) {{ sum+= $i }} print sum}}' > {output.tc_temp} ;
+        cut -f1-6 {input.tc_counts[0]} | paste - {output.tc_temp} > {output.tcs} ;
+        zcat {input.blacklist} | sortBed -i - | mergeBed -i - | intersectBed -a {output.tcs} -b - -v > {output.tcs_no_blacklist}
+        """
+
+rule make_tcs:
+    """Filter TC elements by minimum expression in N samples """
+    input:
+        tcs = rules.make_consensus_tcs.output.tcs_no_blacklist,
+    output:
+        tcs = os.path.join(DIR, "tcs", "tissue_tcs", "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.minExpIn{minExp}.noblacklist.bed")
+    shell:
+        r"""
+        less {input.tcs} | 
+        awk '{{if (( $NF>={wildcards.minExp} )) print $1,$2,$3,$4,$5,$6}}' OFS='\t' > {output.tcs}
+        """
+
+rule get_tc_features:
+    input:
+        expand(os.path.join(DIR, "tcs", "tissue_tcs",
+                            "tc_paraclu.{tissue}.tpmThresh{tpm_thresh}singletonThresh{tpm_thresh}.minExpIn{minExp}.noblacklist.bed"),
+               tissue = TISSUES,
+               tpm_thresh = TPM_THRESHOLD,
+               minExp = MIN_EXP_THRESHOLD)
+    output:
+        TC_FILE_EXPANSION
+    params:
+        indir = os.path.join(DIR, "tcs/tissue_tcs"),
+        outdir = os.path.join(DIR, "tcs/tissue_tcs_formatted")
+    shell:
+        r"""
+        for i in `ls {params.indir}/*.bed`; do b=`basename $i`; less $i | sortBed -i - | mergeBed -i - > {params.outdir}/${{b}}; done
+        """
+
+def format_df(c):
+
+    c[['tc_type','tissue','tpmThresh', 'minExp', 'blacklistfilter']] = c['name'].str.split('.', expand=True )
+    # c.drop(['a'], axis=1, inplace=True)
+    # c['tc_type'] = c['tc_type'].str.replace("tc_", "")
+    # c['tpmThresh'] = c['tpmThresh'].map(lambda x: f'0.{x.replace("singletonThresh0", "")}')
+    # c['tpmThresh'] = c['tpmThresh'].map(lambda x: f'0.{x}')
+    c['minExp'] = c['minExp'].str.replace('minExpIn', '')
+    c['minExp'] = c['minExp'].astype(int)
+    return c
+
+def plot(data=None, x=None, y=None, col=None, row=None, hue=None, kind=None):
+    plt.figure(figsize=(10, 6))
+    g = sns.catplot(data=data, y=y, x=x, col=col, hue=hue, kind=kind, row=row)
+    g.set_titles(row_template = 'min exp in {row_name}', col_template = '{col_name}')
+    for i, ax in enumerate(g.fig.axes):   ## getting all axes of the fig object
+        ax.set_xticklabels(ax.get_xticklabels(), rotation = 90)
+        #        plt.xticks(rotation=90)
+    return g
+
+
+rule get_tss_flank:
+    """Get flanking regions for known TSS annotations """
+    input:
+        gencode_pc = os.path.join(BASE_DATA_DIR, "tsslist_gencodev19_{tss_type}.bed"),
+        hg19_lengths = DATA['hg19_lengths']
+    output:
+        main = os.path.join(DIR, "tc_tss_proximal_distal", "{tss_type}.flank_{flank}.bed")
+    shell:
+        r"""
+        less {input.gencode_pc} | 
+        cut -f1-3 | 
+        sortBed -i - | 
+        mergeBed -i - | 
+        bedtools slop -i - -b {wildcards.flank} -g {input.hg19_lengths} > {output.main}
+        """
+
+
+rule get_num_tcs:
+    input:
+        TC_FILE_EXPANSION
+    output:
+        counts = os.path.join(DIR, "tcs/stats", "allcounts.tsv"),
+        formatted = os.path.join(DIR, "tcs/stats", "allcounts_formatted.tsv"),
+        fig = os.path.join(FIGDIR, "fig.tc_counts.png"),
+    params:
+        idir = os.path.join(DIR, "tcs", "tissue_tcs_formatted")
+    run:
+        shell(r"""
+        for i in `ls {params.idir}/*.bed`; do b=`basename $i .bed`;
+        less $i | wc -l | 
+        awk '{{print "'"$b"'""\t"$0 }}' OFS='\t' ; done > {output.counts}
+        """)
+        d = pandas.read_csv(output.counts, sep='\t', header=None, names=['name','tc_counts'])
+        c = format_df(d)
+
+        c.to_csv(output.formatted, sep='\t', index=False)
+        g = plot(data=c, y="tc_counts", x="tc_type", col="tissue", row="minExp", kind="bar", hue="tpmThresh")
+        plt.savefig(output.fig, bbox_inches="tight", dpi=300)
+
+    
+                
+rule get_tss_proximal_distal:
+    input:
+        TC_FILE_EXPANSION,
+        tss_flank = rules.get_tss_flank.output.main
+    output:
+        counts = os.path.join(DIR, "tcs/stats", "tss.{tss_type}.flank_{flank}_proximal_distal.txt"),
+        formatted = os.path.join(DIR, "tcs/stats", "tss.{tss_type}.flank_{flank}_proximal_distal_formatted.txt"),
+        fig = os.path.join(DIR, "tcs/stats", "fig.tss.{tss_type}.flank_{flank}_proximal_distal_formatted.png")
+    params:
+        idir = os.path.join(DIR, "tcs", "tissue_tcs_formatted")
+    run:
+        shell(r"""
+        for i in `ls {params.idir}/*.bed`; do b=`basename $i .bed`; 
+        intersectBed -a $i -b {input.tss_flank} -u -wa | wc -l | awk '{{print "'"$b"'""\tproximal\t"$0 }}' OFS='\t'; done > {output.counts} ;  
+        for i in `ls {params.idir}/*.bed`; do b=`basename $i .bed`; 
+        intersectBed -a $i -b {input.tss_flank} -v -wa | wc -l | awk '{{print "'"$b"'""\tdistal\t"$0 }}' OFS='\t'; done >> {output.counts} ;
+        """)
+        d = pandas.read_csv(output.counts, sep='\t', header=None, names=['name', 'tss_pos', 'tc_counts'])
+        prd = d.pivot_table(index=['name'], columns="tss_pos", values="tc_counts").reset_index()
+        prd['fraction_distal'] = prd['distal']/(prd['proximal'] + prd['distal'])
+
+        c = format_df(prd)
+        c.to_csv(output.formatted, sep='\t', index=False)
+        g = plot(data=c, y="fraction_distal", x="tc_type", col="tissue", row="minExp", kind="bar", hue="tpmThresh")
+        
+        plt.savefig(output.fig, bbox_inches="tight", dpi=300)
+        
+
+rule plot_size_distributions:
+    input:
+        tcs = TC_FILE_EXPANSION
+    output:
+        fig = os.path.join(FIGDIR, "tc_lengths.png"),
+    params:
+        idir = os.path.join(DIR, "tcs", "tissue_tcs_formatted")
+    run:
+        def fixdf(filename):
+            d = pandas.read_csv(filename, sep='\t', header=None, names=['chrom','start','end'])
+            
+            d['len'] = d['end'] - d['start']
+            d['name'] = os.path.basename(filename).replace(".bed", "")
+            return d
+
+        filelist = glob.glob(os.path.join(params.idir, "*.bed"))
+        df = pandas.concat([fixdf(filename) for filename in filelist])
+        c = format_df(df)
+        g = plot(data=c, y="len", x="tc_type", col="tissue", row="minExp", kind="box", hue="tpmThresh")
+
+        for i, ax in enumerate(g.fig.axes):
+            ax.set(ylim=(0, 800))
+
+        plt.savefig(output.fig, bbox_inches="tight", dpi=300)
+
+
+
+
