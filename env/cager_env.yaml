@@ -1,0 +1,11 @@
+channels:
+  - conda-forge
+  - bioconda
+  - r
+  - defaults
+dependencies:
+  - bioconductor-CAGEr
+  - bioconductor-BSgenome
+  - bioconductor-BSgenome.Drerio.UCSC.danRer7
+  - bioconductor-BSgenome.Hsapiens.UCSC.hg19
+  - r-argparse
