@@ -1,0 +1,174 @@
+import pandas
+import numpy
+import itertools
+import os
+import sys
+import math
+
+DIR = config['results']
+workdir:
+    DIR
+
+DATADIR = "formatted"
+MPRADIR = "uq.dna_bc.rna_rep"
+FIGDIR = "figures"
+
+POOLS = config['pools']
+CONFIGS = config['configs']
+minDNA = config['minDNA']
+SCRIPTS = config['SCRIPTS']
+minBARCODES = config['minBarcodes']
+
+def get_split_ref_alt():
+    try:
+        out = config['split_ref_alt']
+    except KeyError:
+        out = ""
+    return out
+
+rule all:
+    input:
+        mpra = expand(os.path.join(MPRADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.type_{norm}.mpra.tsv"),
+                      pool = POOLS,
+                      config = CONFIGS,
+                      minDNA = minDNA,
+                      minBarcode = minBARCODES,
+                      norm = ['norm'])
+
+rule get_barcodes_common_across_configs:
+    input:
+        pairings = expand(config['subassembly'], config = CONFIGS),
+    output:
+        barcodes_to_remove = os.path.join(DATADIR, "starr_seq.barcodes_common_across_configs.txt")
+    run:
+        # Read pairing data, find barcodes common among configs, remove these
+        p = {}
+        configs = []
+        for f in input.pairings:
+            config = os.path.basename(f).replace("_strm_enhancer.haps.final.txt", "").replace("VRE_", "")
+            configs.append(config)
+            p[config] = pandas.read_csv(f, sep='\t', usecols=['readgroupid', 'passes', 'refname', 'status', 'n_variants_passing'])
+            
+        # Find common barcodes among configs:
+        commons = set()
+
+        for c1 in configs:
+            set1 = set(p[c1]['readgroupid'])
+            for c2 in [c for c in configs if c != c1]:
+                set2 = set(p[c2]['readgroupid'])
+                intersection = set1.intersection(set2)
+                commons.update(intersection)
+                
+        exclude_barcodes = list(commons)
+        with open(output.barcodes_to_remove, "w+") as f:
+            f.write('\n'.join(exclude_barcodes))
+            
+rule organize_data:
+    """match barcodes with barcode-insert pairings
+    Remove barcodes common across configs"""
+    input:
+        barcode_counts = config['barcode_counts'],
+        subassembly = config['subassembly'],
+        exclude_barcodes = rules.get_barcodes_common_across_configs.output.barcodes_to_remove
+    output:
+        starr_results = os.path.join(DATADIR, "barcode_insert_counts.{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.tsv")
+    log:
+        mylog = os.path.join(DATADIR, "logs", "barcode_insert_counts.{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.log")
+    params:
+        script = SCRIPTS['organize_data'],
+        pool = lambda wildcards: ' '.join(wildcards.pool.split("_and_"))
+    shell:
+        ' python {params.script} '
+        ' --barcode_counts {input.barcode_counts}' 
+        ' --subassembly {input.subassembly} '
+        ' --barcode_to_remove {input.exclude_barcodes}'
+        ' --config {wildcards.config} '
+        ' --pool {params.pool} '
+        ' --minDNA {wildcards.minDNA} '
+        ' --minBarcode {wildcards.minBarcode}'
+        ' --output {output.starr_results}'
+        ' --log {log.mylog}'
+
+rule format_for_analyze:
+    input:
+        data = rules.organize_data.output.starr_results,
+    output:
+        rna = os.path.join(DATADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.rna_counts.tsv"),
+        dna = os.path.join(DATADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.dna_counts.tsv"),
+        rna_annot = os.path.join(DATADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.rna_annots.tsv"),
+        dna_annot = os.path.join(DATADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.dna_annots.tsv"),
+    params:
+        out_prefix = os.path.join(DATADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}"),
+        pool = lambda wildcards: ' '.join(wildcards.pool.split("_and_")),
+        script = config['SCRIPTS']['format'],
+        split_ref_alt = get_split_ref_alt()
+    shell:
+        ' python {params.script} '
+        ' --results {input.data} '
+        ' --pool {params.pool} '
+        ' --config {wildcards.config} '
+        ' --minDNA {wildcards.minDNA} '
+        ' {params.split_ref_alt} ' 
+        ' --out_prefix {params.out_prefix}'
+        
+        
+rule analyze_mpra:
+    """Analyze using MPRAnalyze. Needs version 1.3.1 """
+    input:
+        rna = rules.format_for_analyze.output.rna,
+        dna = rules.format_for_analyze.output.dna,
+        rna_annot = rules.format_for_analyze.output.rna_annot,
+        dna_annot = rules.format_for_analyze.output.dna_annot,
+    output:
+        mpra =  os.path.join(MPRADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.type_{norm}.mpra.tsv")
+    params:
+        script = config['SCRIPTS']['mpra_analyze'],
+        norm = lambda wildcards: " --size_norm " if wildcards.norm == "norm" else ""
+    log:
+        os.path.join(MPRADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.type_{norm}.log")
+    shell:
+        ' /lab/sw/modules/R/3.5.1/bin/Rscript {params.script} '
+        ' --rna {input.rna} '
+        ' --dna {input.dna} '
+        ' --rna_annot {input.rna_annot} '
+        ' --dna_annot {input.dna_annot} '
+        ' {params.norm} '
+        ' --output {output.mpra} '
+        
+rule plot:
+    """plot bluemouse """
+    input:
+        mpra = rules.analyze_mpra.output.mpra,
+    output:
+        fig = os.path.join(FIGDIR, "fig.{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.type_{norm}.fig.pdf")
+    run:
+        def fixdf(f):
+            name = os.path.basename(f).replace("tc_paraclu.", "").replace(".tpmThresh2singletonThresh2.bed","")
+            d = pandas.read_csv(f, sep='\t', header=None, names = ['chrom','start','end','name','score','strand'])
+            d['name'] = name
+            return d
+
+        df = pandas.concat([fixdf(f) for f in input.tcs], ignore_index=True)
+        df['start'] = df['start'].astype(int)
+        df['score'] = 0
+        df.to_csv(output.tcs, sep='\t', header=False, index=False)
+
+        
+##
+# notification
+##
+
+onerror:
+    print("Error: Snakemake aborted!")
+    shell(
+        ("mail -s 'Snakemake MPRA analyze error' "
+         "{config[email]} < {log}")
+    )
+
+    
+onsuccess:
+    print("Success: Snakemake completed!")
+    shell(
+        ("mail -s 'Snakemake MPRA analyze Completed' "
+         "{config[email]} < {log}")
+    )
