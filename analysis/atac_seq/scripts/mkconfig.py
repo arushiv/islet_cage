@@ -77,7 +77,7 @@ config.update({
 
                       
 with open(config_file, 'w+') as f:
-    yaml.dump(config, f)
+    yaml.dump(config, f, default_flow_style=False)
 
         
 

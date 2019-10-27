@@ -6,8 +6,7 @@ import subprocess as sp
 import argparse
 
 def getOpts():
-    parser = argparse.ArgumentParser(description='Make config files for one or more CAGE workflows',
-                                                                              usage='python mkconfig.py --workflow all')
+    parser = argparse.ArgumentParser(description='Make config files for CAGE workflows')
     parser.add_argument('--base', required=True, help="""base directory""")
     parser.add_argument('--email', required=True, help="""email""")
     parser.add_argument('--config', required=True, help="""config file path""")
@@ -41,13 +40,7 @@ config.update({
 
                       
 with open(config_file, 'w+') as f:
-    yaml.dump(config, f)
-
-        
-
-
-# In[10]:
-
+    yaml.dump(config, f, default_flow_style=False)
 
 
 
