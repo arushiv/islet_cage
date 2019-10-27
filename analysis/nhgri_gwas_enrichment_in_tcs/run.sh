@@ -5,6 +5,9 @@ scriptdir="${snakedir}/scripts"
 logdir_prune="$BASE_DIR/work/${workflow}/r2_0.2_EUR_pruning/logs"
 mkdir -p $logdir_prune
 
+# make config
+python ${scriptdir}/mkconfig.py --base ${BASE_DIR} --email ${email} --config ${configdir}/config.yaml --workflow ${workflow}
+
 # Prune and prep GWAS data
 # # print workflow
 snakemake -nprs ${scriptdir}/Snakefile_prune --rulegraph --configfile ${configdir}/config.yaml | dot -Tsvg > ${configdir}/${workflow}_prune.svg

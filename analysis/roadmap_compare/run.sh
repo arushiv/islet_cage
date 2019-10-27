@@ -7,6 +7,9 @@ datadir="$BASE_DIR/work/${workflow}/data"
 mkdir -p $datadir
 mkdir -p $logdir
 
+# make config
+python ${scriptdir}/mkconfig.py --base ${BASE_DIR} --email ${email} --config ${configdir}/config.yaml --workflow ${workflow}
+
 # # print workflow
 snakemake -nprs ${scriptdir}/Snakefile --rulegraph --configfile ${configdir}/config.yaml | dot -Tsvg > ${configdir}/${workflow}.svg
 
