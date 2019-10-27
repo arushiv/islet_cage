@@ -1,0 +1,214 @@
+import os
+import pandas
+import numpy
+import subprocess as sp
+import glob
+import re
+
+DIR = config['results']
+
+workdir:
+    DIR
+
+DATA = config['DATA']
+SCRIPTS = config['SCRIPTS']
+FEATURES = config['FEATURES']
+SELECT = config['SELECT']
+CHROM = list(range(1, 23)) + ['X','Y']
+
+INTERSECT_DIR = os.path.join(DIR, "intersects_with_roadmap")
+FIGURE_DIR = os.path.join(DIR, "figures")
+
+CELLS = glob_wildcards(DATA['roadmap_bed_files'])[0]
+
+STATE_TYPE = ['compressed', 'full']
+POS = ['proximal', 'distal']
+
+rule final:
+    """
+    plot map of feature segments as roadmap states across many cells
+    """
+    input:
+        fig = expand(os.path.join(FIGURE_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}.png"),
+                     feature = FEATURES,
+                     state_type = STATE_TYPE,
+                     pos = POS),
+        simplefig = expand(os.path.join(FIGURE_DIR, "simple.{feature}.roadmap_formatted.{state_type}.{pos}.png"),
+                     feature = SELECT,
+                     state_type = 'full',
+                     pos = POS)
+
+
+rule intersect_fetaures_with_roadmap:
+    """Intersect features with roadmap"""
+    input:
+        feature = DATA['features'],
+        roadmap = DATA['roadmap_bed_files'],
+    output:
+        main = temp(os.path.join(INTERSECT_DIR, "{cell}_roadmap.{feature}.bed"))
+    shell:
+        """
+        intersectBed -a {input.feature} -b {input.roadmap}  -wao  > {output.main}
+        """
+
+        
+rule organize_intersects:
+    """Organize intersects to get number of bp overlaps for each input feature """
+    input:
+        feature = rules.intersect_fetaures_with_roadmap.output.main
+    output:
+        main = os.path.join(INTERSECT_DIR, "{cell}_roadmap.{feature}.formatted.bed")
+    run:
+        d = pandas.read_csv(input.feature, sep='\t', header=None,
+                            names = ['chrom','start','end','r_chrom','r_start','r_end','state','bp'])
+        t = d.groupby(['chrom', 'start', 'end', 'state'])['bp'].sum().reset_index()
+        s = t[t.groupby(['chrom', 'start', 'end'])['bp'].transform(max) == t['bp']].drop_duplicates(subset=['chrom', 'start', 'end'])
+        s['cell'] = wildcards.cell
+        s[['chrom', 'start', 'end', 'state', 'cell']].to_csv(output.main, sep='\t', index=False)
+
+        
+rule concat_per_feature:
+    """Concat across roadmap cells for each feature """
+    input:
+        main = expand(os.path.join(INTERSECT_DIR, "{cell}_roadmap.{{feature}}.formatted.bed"),
+                      cell = CELLS),
+        cell = DATA['roadmap_cells']
+    output:
+        feature = os.path.join(INTERSECT_DIR, "{feature}.roadmap_formatted.bed"),
+        cell_seq = os.path.join(INTERSECT_DIR, "{feature}.roadmap_cell_seq.bed"),
+    run:
+        d = pandas.concat([pandas.read_csv(filename, sep='\t') for filename in input.main])
+        cell = pandas.read_csv(input.cell, sep='\t', usecols=['cell', 'GROUP', 'Standardized_Epigenome_name'])
+        o = pandas.merge(d, cell, how="inner", on="cell")
+        o.to_csv(output.feature, index=False, sep='\t')
+        cell[['cell']].to_csv(output.cell_seq, index=False)
+
+
+rule get_5kb_gencode:
+    input:
+        gencode_pc = DATA['gencode_pc'],
+        hg19_lengths = DATA['hg19_lengths']
+    output:
+        main = os.path.join(DIR, "gencode_pc_5kb.bed")
+    shell:
+        r"""
+        less {input.gencode_pc} | 
+        cut -f1-3 | 
+        sortBed -i - | 
+        mergeBed -i - | 
+        bedtools slop -i - -b 5000 -g {input.hg19_lengths} > {output.main}
+        """
+        
+
+rule separate_into_proximal_distal:
+    input:
+        feature = rules.concat_per_feature.output.feature,
+        gene_5kb = rules.get_5kb_gencode.output.main
+    output:
+        feature_proximal = os.path.join(INTERSECT_DIR, "{feature}.roadmap_formatted.{state_type}.proximal.bed"),
+        feature_distal = os.path.join(INTERSECT_DIR, "{feature}.roadmap_formatted.{state_type}.distal.bed"),        
+    run:
+        import pybedtools
+        g = pybedtools.BedTool(input.gene_5kb)
+        d = pandas.read_csv(input.feature, sep='\t')
+        dbed = pybedtools.BedTool.from_dataframe(
+            d[['chrom','start','end','state','cell','GROUP','Standardized_Epigenome_name']])
+        d_proximal = dbed.intersect(g, u=True).to_dataframe(
+            names=['chrom','start','end','state','cell','GROUP','Standardized_Epigenome_name'])
+        d_distal = dbed.intersect(g, v=True).to_dataframe(
+            names=['chrom','start','end','state','cell','GROUP','Standardized_Epigenome_name'])
+
+        """Compress Roadmap chromatin states"""
+
+        compress = pandas.DataFrame( [["1",['1_TssA','2_TssFlnk','3_TssFlnkU','4_TssFlnkD'], "1_TSS"],
+                           ["2",['7_EnhG1','8_EnhG2','9_EnhA1','10_EnhA2','11_EnhWk'], "2_Enhancer"],
+                           ["3",['16_ReprPC','17_ReprPCWk'], "3_Repressed"]] ,
+                          columns=['new_num', 'state_list', 'new_name']
+        )
+
+        exception = {'new_num' : "4",
+                     'new_name' : "4_Other"}
+
+        def get_new_state_info(x, info_type):
+            for index, row in compress.iterrows():
+                if x in row['state_list']:
+                    return row[info_type]
+            else:
+                return exception[info_type]
+
+        def fixdf(d, outputfile):
+            d['original_state'] = d['state']
+            if wildcards.state_type == "compressed":
+                d['state_num'] = d['state'].map(lambda x: get_new_state_info(x, "new_num"))
+                d['state'] = d['state'].map(lambda x: get_new_state_info(x, "new_name"))
+            else:
+                d['state_num'] = d['state'].map(lambda x: x.split('_')[0])
+                
+            d.to_csv(outputfile, sep='\t', index=False, na_rep="NA")
+
+
+        fixdf(d_proximal, output.feature_proximal)
+        fixdf(d_distal, output.feature_distal)
+                                                              
+        
+rule get_color_codes:
+    input:
+        color = DATA['roadmap_color'],
+        state = DATA['roadmap_state']
+    output:
+        main = os.path.join(INTERSECT_DIR, "roadmap_colors.tsv")
+    run:
+        state = pandas.read_csv(input.state, sep='\t', header=None,
+                                names=['state_num','state_name'], dtype={'state_num':str, 'state_name':str})
+        color = pandas.read_csv(input.color, sep='\t', header=None,
+                                names=['state_num','state_color'], dtype={'state_num':str, 'state_color':str})
+        d = pandas.merge(state, color, how="inner", on=['state_num'])
+        d['state'] = d.apply(lambda x: f"{x['state_num']}_{x['state_name']}", axis=1)
+        print(d)
+        d[['red','green','blue']] = d['state_color'].str.split(',', expand=True)
+        d[['state','red','green','blue']].drop_duplicates().to_csv(output.main, sep='\t', index=False)
+
+        
+rule get_color_codes_compressed:
+    output:
+        main = os.path.join(INTERSECT_DIR, "roadmap_colors_compressed.tsv")
+    run:
+        d = pandas.DataFrame([["1_TSS", 255, 0, 0],
+                              ["2_Enhancer", 255, 255, 0],
+                              ["3_Repressed", 128, 128, 128],
+                              ["4_Other", 255, 255, 255]],
+                             columns = ['state','red','green','blue'])
+        d.to_csv(output.main, sep='\t', index=False)
+
+        
+rule plot_clusters:
+    input:
+        feature = os.path.join(INTERSECT_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}.bed"),
+        roadmap_colors = lambda wildcards: rules.get_color_codes_compressed.output.main \
+                         if wildcards.state_type == "compressed" else rules.get_color_codes.output.main
+    output:
+        feature = os.path.join(FIGURE_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}.png"),
+        feature_pdf = os.path.join(FIGURE_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}.pdf")
+    params:
+        script = SCRIPTS['plot_roadmap_cluster'],
+        base = os.path.join(FIGURE_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}"),
+    shell:
+        """
+        Rscript {params.script} {input.feature} {input.roadmap_colors} {params.base}
+        """
+
+rule plot_clusters_simple:
+    input:
+        feature = os.path.join(INTERSECT_DIR, "{feature}.roadmap_formatted.{state_type}.{pos}.bed"),
+        roadmap_colors = lambda wildcards: rules.get_color_codes_compressed.output.main \
+                         if wildcards.state_type == "compressed" else rules.get_color_codes.output.main
+    output:
+        feature = os.path.join(FIGURE_DIR, "simple.{feature}.roadmap_formatted.{state_type}.{pos}.png"),
+        feature_pdf = os.path.join(FIGURE_DIR, "simple.{feature}.roadmap_formatted.{state_type}.{pos}.pdf")
+    params:
+        script = SCRIPTS['plot_roadmap_cluster_simple'],
+        base = os.path.join(FIGURE_DIR, "simple.{feature}.roadmap_formatted.{state_type}.{pos}"),
+    shell:
+        """
+        Rscript {params.script} {input.feature} {input.roadmap_colors} {params.base}
+        """
