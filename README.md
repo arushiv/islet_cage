@@ -34,8 +34,9 @@ conda env create --name cage --file env/cage.yaml
 conda activate cage
 ```
 	
-#### Set other environment variables
-Fill up file `env/env_vars.sh` specifying email, manually installed software paths etc.
+### Set other environment variables
+#### 1. Fill up file `env/env_vars.sh` specifying email, manually installed software paths etc.
+#### 2. Add variables to conda environment 
 ```
 mkdir -p $CONDA_PREFIX/etc/conda/activate.d
 mkdir -p $CONDA_PREFIX/etc/conda/deactivate.d
@@ -50,12 +51,19 @@ bash env/env_vars.sh
 ```
 
 ### Analyses order
+#### Dry run of <analysis_name>
+```
+bash analysis/<analysis_name> run.sh -n
+```
+#### Run analyses by submitting jobs
+```
+bash analysis/<analysis_name> run.sh
+```
+#### Recommended order or analyses
 call_tcs,
-chromhmm,
 atac_seq,
 annotations,
 compare_with_fantom,
-fgwas,
 footprint_enrichment_in_tcs,
 nhgri_gwas_enrichment_in_tcs,
 roadmap_compare,
