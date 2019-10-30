@@ -22,7 +22,7 @@ $ wget https://repo.continuum.io/archive/Anaconda3-5.0.1-Linux-x86_64.sh
 $ bash Anaconda3-5.0.1-Linux-x86_64.sh
 ```
 Answer yes to the user agreement; go with the default installation path or specify your own. Answer yes to prepend the install location to your PATH.
-Required for analyses computing enrichment of eQTL and GWAS in regulatory annotations, please install [GREGOR](https://genome.sph.umich.edu/wiki/GREGOR) and [fGWAS](https://github.com/joepickrell/fgwas) manually. Edit the path to the GREGR.pl script file in `Snakefile_config`. For atac-seq, bwa is and bwa hg19 index is needed.
+Please manually install [GREGOR](https://genome.sph.umich.edu/wiki/GREGOR), required to compute enrichment of GWAS in regulatory annotations. Edit the path to the GREGR.pl script file in `env/env_vars.sh`. For atac-seq, bwa is and bwa hg19 index are to be specified in `env/env_vars.sh`.
 	
 ### Prepare analysis directory
 Clone this repository and change into it.
