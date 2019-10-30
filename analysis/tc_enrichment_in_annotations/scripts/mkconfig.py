@@ -32,8 +32,8 @@ config = {'email': email,
 
 config.update({
     'DATA': {
-        'annotation': get_path("work/tc_enrichment_in_annotations/data/{annotation}.bed"),
-        'segment': get_path("work/annotations/{segment}.bed"),
+        'annotation': get_path("data/tc_enrichment_in_annotations/annotations/{annotation}.bed"),
+        'segment': get_path("data/annotations/{segment}.bed"),
         'workspace': get_path("data/hg19_chromsizes.bed"),
         'output': "{segment}.chromstate_{annotation}.gatResults.dat",
         'count_output': "", #"E{state}.chromstate_{annotation}.%s.countsOutput"
