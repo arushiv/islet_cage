@@ -127,7 +127,7 @@ rule analyze_mpra:
     log:
         os.path.join(MPRADIR, "{pool}.config_{config}.minDNA{minDNA}.minBarcode{minBarcode}.type_{norm}.log")
     shell:
-        ' /lab/sw/modules/R/3.5.1/bin/Rscript {params.script} '
+        ' Rscript {params.script} '
         ' --rna {input.rna} '
         ' --dna {input.dna} '
         ' --rna_annot {input.rna_annot} '
