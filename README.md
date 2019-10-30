@@ -1,29 +1,34 @@
-This repository contains code to reproduce results of the manuscript: 
-0;95;0c## [Integrating Enhancer RNA signatures with diverse omics data identifies characteristics of transcription initiation in pancreatic islets](https://www.biorxiv.org/content/10.1101/812552v1)
+This repository contains code to run analyses presented in the manuscript: 
+## [Integrating Enhancer RNA signatures with diverse omics data identifies characteristics of transcription initiation in pancreatic islets](https://www.biorxiv.org/content/10.1101/812552v1)
 	
-Each directory in `analysis` contains code for analyses for different of the paper. Everything is run using [snakemake](http://snakemake.readthedocs.io/en/latest/) version 5.5.0. The analysis directories follow this general pattern:
+Directories in the `analysis` folder contain scripts for different analyses. Everything is run using [snakemake](http://snakemake.readthedocs.io/en/latest/) version 5.5.0. Config for a SLURM cluster execution are provided. The analysis directories follow this general pattern:
 ```
-├── run.sh : (file notes base directory and paths, generates a workflow config and can be used to execute analysis or print a dry run) 
+├── run.sh : for workflow execution
 ├── configs
 │   ├── cluster.yaml : Cluster job specifications (SLURM)
-│   ├── config.yaml : Workflow configuration 
+│   └── config.yaml : Workflow configuration (created from mkconfig.py while using environment variables)
 └── scripts : Scripts for analyses
+    ├── mkconfig.py
     ├── script1.py
     ├── script2.R
     └── Snakefile : Snakemake files(s) 
 ```
+Given the correct environment variables are set and input data is downloaded from Zenodo (see below), executing the `run.sh` file sets base directory and paths, generates a workflow config and can be used to execute analysis or print a dry run). Most software required can be set up by a conda environment. Conda can be obtained through the Anaconda/Miniconda Python3 distribution. These instructions are for the Linux platform
 
-Most software required can be set up by a conda environment. Conda can be obtained through the Anaconda/Miniconda Python3 distribution. These instructions are for the Linux platform
-
-### Using conda enviroment: Install [Anaconda3](https://conda.io/docs/user-guide/install/index.html)
+### Install [Anaconda3](https://conda.io/docs/user-guide/install/index.html)
 Assuming that you have a 64-bit system, on Linux, download and install Anaconda 3
 ```
 $ wget https://repo.continuum.io/archive/Anaconda3-5.0.1-Linux-x86_64.sh
 $ bash Anaconda3-5.0.1-Linux-x86_64.sh
 ```
 Answer yes to the user agreement; go with the default installation path or specify your own. Answer yes to prepend the install location to your PATH.
-Please manually install [GREGOR](https://genome.sph.umich.edu/wiki/GREGOR), required to compute enrichment of GWAS in regulatory annotations. Edit the path to the GREGR.pl script file in `env/env_vars.sh`. For atac-seq, bwa is and bwa hg19 index are to be specified in `env/env_vars.sh`.
-	
+#### Please manually install [GREGOR](https://genome.sph.umich.edu/wiki/GREGOR), required to compute enrichment of GWAS in regulatory annotations. Edit the path to the GREGR.pl script file in `env/env_vars.sh`.
+#### For atac-seq, bwa is and bwa hg19 index are to be specified in `env/env_vars.sh`.
+#### For MPRA analysis, install R package [MPRAnalyze version 1.3.1](https://rdrr.io/github/YosefLab/MPRAnalyze/) which is currently available from github
+```
+install.packages("remotes")
+remotes::install_github("YosefLab/MPRAnalyze")
+```
 ### Prepare analysis directory
 Clone this repository and change into it.
 Download the data archive from Zenodo at data/
@@ -50,7 +55,7 @@ cp env/env_vars.sh $CONDA_PREFIX/etc/conda/deactivate.d/
 bash env/env_vars.sh
 ```
 
-### Analyses order
+### Analyses 
 #### Dry run of <analysis_name>
 ```
 bash analysis/<analysis_name> run.sh -n
