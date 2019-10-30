@@ -12,15 +12,14 @@ matplotlib.rcParams['pdf.fonttype'] = 42
 matplotlib.rcParams.update({'font.size': 14})
 plt.switch_backend('agg')
 
-
-cage_config = os.getenv("cage_config")
-include: cage_config
-
-DIR = os.path.join(BASE_WORK_DIR, "call_tcs/")
+BASE_DIR = os.getenv("BASE_DIR")
+BASE_DATA_DIR = os.path.join(BASE_DIR, "data")
+my_email = os.getenv("email")
+DIR = os.path.join(BASE_DIR, "work/call_tcs/")
 workdir: DIR
 
 FIGDIR = os.path.join(DIR, "figures")
-SCRIPTDIR = os.path.join(BASE_ANALYSIS_DIR, "call_tcs", "scripts/")
+SCRIPTDIR = os.path.join(BASE_DIR, "analysis/call_tcs/scripts/")
 
 onsuccess:
     shell("""mail -s "TC calling finished" {my_email} < {log}""")
@@ -30,7 +29,7 @@ onerror:
     shell("""mail -s "an error occurred in TC calling workflow" {my_email} < {log}""")
 
 DATA = {
-    'trimmed_processed_bams' : os.path.join(BASE_WORK_DIR, "trimmed_bams/{sample}.dedup.bam"),
+    'trimmed_processed_bams' : os.path.join(BASE_DATA_DIR, "trimmed_bams/{sample}.dedup.bam"),
     'sample_library_map' : os.path.join(BASE_DATA_DIR, "sample_library_map.tsv"),
     'gencode_tss_pc' : os.path.join(BASE_DATA_DIR, "tsslist_gencodev19_pc.bed"),
     'gencode_tss_all' : os.path.join(BASE_DATA_DIR, "tsslist_gencodev19_all.bed"),
@@ -135,7 +134,7 @@ rule call_tag_clusters_paraclu:
     log:
         os.path.join(DIR, "tcs/logs", "tc_paraclu.{sample}.tpmThresh{tpm_thresh}singletonThresh{singleton_thresh}.log")
     conda:
-        "/home/arushiv/erna_analyses/nisc_cage_work/envs/cager_env.yaml"
+        os.path.join(BASE_DIR, "envs/cager_env.yaml")
     shell:
         ' Rscript {params.script} '
         ' --ctss {input.ctss} '

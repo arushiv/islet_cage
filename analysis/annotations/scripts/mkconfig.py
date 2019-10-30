@@ -31,10 +31,10 @@ config = {'email': email,
           'results': results}
     
 config.update({
-    'chromatin_states': get_path("work/chromhmm/selected_annotated_states/files_by_state/cell4_11.Islets.{state}.bed"),
-    'atac_peaks': get_path("work/atac_seq/final_peaks/Islets.broadPeaks_fdr0.01_noBlacklist.bed"),
-    'tcs': get_path("work/call_tcs/tcs/tissue_tcs_formatted/tc_paraclu.Islets.tpmThresh2singletonThresh2.minExpIn10.noblacklist.bed"),
-    'tcs_with_strand': get_path("work/call_tcs/tcs/tissue_tcs/tc_paraclu.Islets.tpmThresh2singletonThresh2.minExpIn10.noblacklist.bed"),
+    'chromatin_states': get_path("data/chromhmm/selected_annotated_states/files_by_state/cell4_11.Islets.{state}.bed"),
+    'atac_peaks': get_path("data/atac_seq/final_peaks/Islets.broadPeaks_fdr0.01_noBlacklist.bed"),
+    'tcs': get_path("data/call_tcs/tissue_tcs_formatted/tc_paraclu.Islets.tpmThresh2singletonThresh2.minExpIn10.noblacklist.bed"),
+    'tcs_with_strand': get_path("data/call_tcs/tissue_tcs/tc_paraclu.Islets.tpmThresh2singletonThresh2.minExpIn10.noblacklist.bed"),
     'hg19': get_path("data/hg19_chromsizes.bed")
 })
 

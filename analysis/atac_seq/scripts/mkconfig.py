@@ -71,7 +71,7 @@ config.update({
     'whitelist':{},
     'blacklist':{
         'hg19': [ get_path("data/wgEncodeDukeMapabilityRegionsExcludable.bed.gz"),
-                  get_path("/wgEncodeDacMapabilityConsensusExcludable.bed.gz")]
+                  get_path("data/wgEncodeDacMapabilityConsensusExcludable.bed.gz")]
     }
 })
 

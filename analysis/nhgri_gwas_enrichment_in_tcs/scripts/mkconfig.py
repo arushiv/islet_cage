@@ -62,7 +62,7 @@ gregor_config.update({
     'output_dir' : "output_{trait}.ld{gregor_r2}",
     'DATA' :{
         'input_snps' : get_path("work/nhgri_gwas_enrichment_in_tcs/r2_0.2_EUR_pruning/pruned_snps/pruned.{trait}.txt"),
-        'annotation' : get_path("work/call_tcs/tcs/tissue_tcs_formatted/{annotation}.bed"),
+        'annotation' : get_path("data/call_tcs/tissue_tcs_formatted/{annotation}.bed"),
         'ANNOTATIONS' : "expand(config['DATA']['annotation'], annotation = ['tc_paraclu.Islets.tpmThresh2singletonThresh2.minExpIn10.noblacklist'])",
         'output' : "enrichment_stats.txt",
         'output_fig' : "fig.gwas_enrichment_tcs.pdf"

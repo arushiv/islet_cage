@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import yaml
+0;95;0cimport yaml
 import sys
 import os
 import subprocess as sp
@@ -36,9 +36,9 @@ sp.check_output(cmd, shell=True)
 
 config.update({
     'DATA':{
-        'raw': "data/fantom/*.ctss.bed.gz",
-        'srdf': "data/fantom/00_human.tissue.hCAGE.hg19.assay_sdrf.txt",
-        'pancreas_ctss': "data/fantom/pancreas%2c%20adult%2c%20donor1.CNhs11756.10049-101G4.hg19.ctss.bed.gz"
+        'raw': get_path("data/fantom/*.ctss.bed.gz"),
+        'srdf': get_path("data/fantom/00_human.tissue.hCAGE.hg19.assay_sdrf.txt"),
+        'pancreas_ctss': get_path("data/fantom/pancreas%2c%20adult%2c%20donor1.CNhs11756.10049-101G4.hg19.ctss.bed.gz")
     },
     'SCRIPTS':{
         'tc_cage':get_path( "analysis/call_tcs/scripts/tc_cage.R")
