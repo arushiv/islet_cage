@@ -1,7 +1,7 @@
 This repository contains code to run analyses presented in the manuscript: 
 ## [Integrating Enhancer RNA signatures with diverse omics data identifies characteristics of transcription initiation in pancreatic islets](https://www.biorxiv.org/content/10.1101/812552v1)
 	
-Directories in the `analysis` folder contain scripts for different analyses. Everything is run using [snakemake](http://snakemake.readthedocs.io/en/latest/) version 5.5.0. Config for a SLURM cluster execution are provided. The analysis directories follow this general pattern:
+Directories in the `analysis` folder contain individual workflows, run using [snakemake](http://snakemake.readthedocs.io/en/latest/) version 5.5.0. Config for a SLURM cluster execution are provided. The analysis directories follow this general pattern:
 ```
 ├── run.sh : for workflow execution
 ├── configs
@@ -13,64 +13,42 @@ Directories in the `analysis` folder contain scripts for different analyses. Eve
     ├── script2.R
     └── Snakefile : Snakemake files(s) 
 ```
-Given the correct environment variables are set and input data is downloaded from Zenodo (see below), executing the `run.sh` file sets base directory and paths, generates a workflow config and can be used to execute analysis or print a dry run). Most software required can be set up by a conda environment. Conda can be obtained through the Anaconda/Miniconda Python3 distribution. These instructions are for the Linux platform
+Given the correct environment variables are set and the input data is downloaded from Zenodo (see below), executing the `run.sh` file sets base directory and paths, generates a workflow config and can be used to execute analysis or print a dry run). Most software required can be set up by a conda environment. Conda can be obtained through the Anaconda/Miniconda Python3 distribution. These instructions are for the Linux platform:
 
-### Install [Anaconda3](https://conda.io/docs/user-guide/install/index.html)
-Assuming that you have a 64-bit system, on Linux, download and install Anaconda 3
-```
-$ wget https://repo.continuum.io/archive/Anaconda3-5.0.1-Linux-x86_64.sh
-$ bash Anaconda3-5.0.1-Linux-x86_64.sh
-```
-Answer yes to the user agreement; go with the default installation path or specify your own. Answer yes to prepend the install location to your PATH.
+### 1. Set up conda and software:
+#### Install [Anaconda3](https://conda.io/docs/user-guide/install/index.html) if you don't already have conda on your system.
 #### Please manually install [GREGOR](https://genome.sph.umich.edu/wiki/GREGOR), required to compute enrichment of GWAS in regulatory annotations. Edit the path to the GREGR.pl script file in `env/env_vars.sh`.
-#### For atac-seq, bwa is and bwa hg19 index are to be specified in `env/env_vars.sh`.
+#### For atac-seq, bwa and bwa hg19 index are to be specified in `env/env_vars.sh`.
 #### For MPRA analysis, install R package [MPRAnalyze version 1.3.1](https://rdrr.io/github/YosefLab/MPRAnalyze/) which is currently available from github
 ```
 install.packages("remotes")
 remotes::install_github("YosefLab/MPRAnalyze")
 ```
-### Prepare analysis directory
+### 2. Prepare analysis directory
 Clone this repository and change into it.
-Download the data archive from Zenodo at data/
+Download the data archive from [Zenodo deposition](https://zenodo.org/record/3524578#.XdbDaL97l7O) and untar the archive
+```
+tar -xvzf islet-cage-zenodo.tar.gz
+```
 	 	
-### Set up conda environment
+### 3. Set up conda environment
+#### 1. Fill up file `env/env_vars.sh` specifying email, manually installed software paths etc.
 ```
 conda env create --name cage --file env/cage.yaml
 conda activate cage
-```
-	
-### Set other environment variables
-#### 1. Fill up file `env/env_vars.sh` specifying email, manually installed software paths etc.
-#### 2. Add variables to conda environment 
-```
 mkdir -p $CONDA_PREFIX/etc/conda/activate.d
 mkdir -p $CONDA_PREFIX/etc/conda/deactivate.d
 
 cp env/env_vars.sh $CONDA_PREFIX/etc/conda/activate.d/
 cp env/env_vars.sh $CONDA_PREFIX/etc/conda/deactivate.d/
 ```
-#### or directly add lines `env/env_vars.sh` to your bashrc
-#### or run everytime
-```
-bash env/env_vars.sh
-```
 
 ### Analyses 
 #### Dry run of <analysis_name>
 ```
-bash analysis/<analysis_name> run.sh -n
+analysis/<analysis_name>/run.sh -n
 ```
 #### Run analyses by submitting jobs
 ```
-bash analysis/<analysis_name> run.sh
+analysis/<analysis_name>/run.sh
 ```
-#### Recommended order or analyses
-call_tcs,
-atac_seq,
-annotations,
-compare_with_fantom,
-footprint_enrichment_in_tcs,
-nhgri_gwas_enrichment_in_tcs,
-roadmap_compare,
-starr-seq,
-tc_enrichment_in_annotations
