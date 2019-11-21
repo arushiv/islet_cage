@@ -26,7 +26,7 @@ remotes::install_github("YosefLab/MPRAnalyze")
 ```
 ### 2. Prepare analysis directory
 Clone this repository and change into it.
-Download the data archive from [Zenodo deposition](https://zenodo.org/record/3524578#.XdbDaL97l7O) and untar the archive
+Download the data archive from the [Zenodo deposition](https://zenodo.org/record/3524578#.XdbDaL97l7O) and untar the archive
 ```
 tar -xvzf islet-cage-zenodo.tar.gz
 ```
