@@ -8,7 +8,7 @@ dependencies:
   - bioconductor-BSgenome
   - bioconductor-BSgenome.Drerio.UCSC.danRer7
   - bioconductor-BSgenome.Hsapiens.UCSC.hg19
-  - bioconductor-MPRAnalyze
+  - bioconductor-biocparallel 
   - r-base
   - r-argparse
   - r-ggrepel
